@@ -16,6 +16,7 @@
 #include <wordexp.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <sys/prctl.h>
 
 #define errExit(msg)    do { perror(msg); exit(EXIT_FAILURE); \
                         } while (0)
@@ -88,6 +89,17 @@ usage(char *pname)
     exit(EXIT_FAILURE);
 }
 
+static int
+isSubreaper()
+{
+   int setting;
+   if (prctl(PR_GET_CHILD_SUBREAPER, &setting, 0, 0, 0) < 0) {
+        perror("prctl PR_GET_CHILD_SUBREAPER");
+        return 0;
+   }
+   return setting;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -105,14 +117,17 @@ main(int argc, char *argv[])
         }
     }
 
-    if (reaper) {
+    if (isSubreaper() && verbose)
+        printf("\tinit: myself gets subreaper attribute by fork\n");
+
+    if (reaper && !isSubreaper()) {
         sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
         sigemptyset(&sa.sa_mask);
         sa.sa_handler = child_handler;
         if (sigaction(SIGCHLD, &sa, NULL) == -1)
             errExit("sigaction");
         if (verbose)
-            printf("\tinit: myself is subchild reaper\n");
+            printf("\tinit: myself is set as subchild reaper\n");
     }
 
     if (verbose)
@@ -174,6 +189,8 @@ main(int argc, char *argv[])
 
             /* Child executes shell command and terminates */
 
+            if (isSubreaper() && verbose)
+                printf("Child(PID %d) gets subreaper attribute by fork\n", getpid());
             execvp(arg_vec[0], arg_vec);
             errExit("execvp");          /* Only reached if execvp() fails */
         }
