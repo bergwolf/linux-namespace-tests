@@ -21,6 +21,7 @@
                         } while (0)
 
 static int verbose = 0;
+static int reaper = 0;
 
 /* Display wait status (from waitpid() or similar) given in 'status' */
 
@@ -96,18 +97,23 @@ main(int argc, char *argv[])
     pid_t pid;
     int opt;
 
-    while ((opt = getopt(argc, argv, "v")) != -1) {
+    while ((opt = getopt(argc, argv, "vr")) != -1) {
         switch (opt) {
         case 'v': verbose = 1;          break;
+	case 'r': reaper = 1;		break;
         default:  usage(argv[0]);
         }
     }
 
-    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_handler = child_handler;
-    if (sigaction(SIGCHLD, &sa, NULL) == -1)
-        errExit("sigaction");
+    if (reaper) {
+        sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_handler = child_handler;
+        if (sigaction(SIGCHLD, &sa, NULL) == -1)
+            errExit("sigaction");
+        if (verbose)
+            printf("\tinit: myself is subchild reaper\n");
+    }
 
     if (verbose)
         printf("\tinit: my PID is %ld\n", (long) getpid());

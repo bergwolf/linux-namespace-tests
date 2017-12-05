@@ -12,12 +12,17 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <stdio.h>
+#include <errno.h>
+#include <sys/prctl.h>
+
 
 /* A simple error-handling function: print an error message based
    on the value in 'errno' and terminate the calling process */
 
 #define errExit(msg)    do { perror(msg); exit(EXIT_FAILURE); \
                         } while (0)
+
+static int verbose = 0;
 
 static void
 usage(char *pname)
@@ -47,14 +52,42 @@ childFunc(void *arg)
 
 static char child_stack[STACK_SIZE];    /* Space for child's stack */
 
+/* Display wait status (from waitpid() or similar) given in 'status' */
+
+/* SIGCHLD handler: reap child processes as they change state */
+
+static void
+child_handler(int sig)
+{
+    pid_t pid;
+    int status;
+
+    /* WUNTRACED and WCONTINUED allow waitpid() to catch stopped and
+       continued children (in addition to terminated children) */
+
+    while ((pid = waitpid(-1, &status,
+                          WNOHANG | WUNTRACED | WCONTINUED)) != 0) {
+        if (pid == -1) {
+            if (errno == ECHILD)        /* No more children */
+                break;
+            else
+                perror("waitpid");      /* Unexpected error */
+        }
+
+        if (verbose)
+            printf("\tinit: SIGCHLD handler: PID %ld terminated\n",
+                    (long) pid);
+    }
+}
+
 int
 main(int argc, char *argv[])
 {
-    int flags, opt, verbose;
+    int flags, opt;
     pid_t child_pid;
+    struct sigaction sa;
 
     flags = 0;
-    verbose = 0;
 
     /* Parse command-line options. The initial '+' character in
        the final getopt() argument prevents GNU-style permutation
@@ -75,6 +108,18 @@ main(int argc, char *argv[])
         default:  usage(argv[0]);
         }
     }
+
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = child_handler;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1)
+        errExit("sigaction");
+
+
+    if (prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) < 0)
+	    errExit("prctl PR_SET_CHILD_SUBREAPER");
+    if (verbose)
+	    printf("%s, top parent set PR_SET_CHILD_SUBREAPER\n", argv[0]);
 
     child_pid = clone(childFunc,
                     child_stack + STACK_SIZE,
