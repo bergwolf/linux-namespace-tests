@@ -23,6 +23,7 @@
                         } while (0)
 
 static int verbose = 0;
+static int reaper = 0;
 
 static void
 usage(char *pname)
@@ -35,6 +36,7 @@ usage(char *pname)
     fprintf(stderr, "    -p   new PID namespace\n");
     fprintf(stderr, "    -u   new UTS namespace\n");
     fprintf(stderr, "    -U   new user namespace\n");
+    fprintf(stderr, "    -r   make cmd self a child subreaper\n");
     fprintf(stderr, "    -v   Display verbose messages\n");
     exit(EXIT_FAILURE);
 }
@@ -96,7 +98,7 @@ main(int argc, char *argv[])
        has command-line options. We don't want getopt() to treat
        those as options to this program. */
 
-    while ((opt = getopt(argc, argv, "+imnpuUv")) != -1) {
+    while ((opt = getopt(argc, argv, "+imnpuUvr")) != -1) {
         switch (opt) {
         case 'i': flags |= CLONE_NEWIPC;        break;
         case 'm': flags |= CLONE_NEWNS;         break;
@@ -104,6 +106,7 @@ main(int argc, char *argv[])
         case 'p': flags |= CLONE_NEWPID;        break;
         case 'u': flags |= CLONE_NEWUTS;        break;
         case 'U': flags |= CLONE_NEWUSER;       break;
+        case 'r': reaper = 1;                  break;
         case 'v': verbose = 1;                  break;
         default:  usage(argv[0]);
         }
@@ -115,11 +118,12 @@ main(int argc, char *argv[])
     if (sigaction(SIGCHLD, &sa, NULL) == -1)
         errExit("sigaction");
 
-
-    if (prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) < 0)
-	    errExit("prctl PR_SET_CHILD_SUBREAPER");
-    if (verbose)
-	    printf("%s, top parent set PR_SET_CHILD_SUBREAPER\n", argv[0]);
+    if (reaper) {
+        if (prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) < 0)
+            errExit("prctl PR_SET_CHILD_SUBREAPER");
+        if (verbose)
+            printf("%s, top parent set PR_SET_CHILD_SUBREAPER\n", argv[0]);
+    }
 
     child_pid = clone(childFunc,
                     child_stack + STACK_SIZE,
