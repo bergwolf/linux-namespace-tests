@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/prctl.h>
+#include <sys/types.h>
+#include <fcntl.h>
 
 
 /* A simple error-handling function: print an error message based
@@ -77,9 +79,41 @@ child_handler(int sig)
         }
 
         if (verbose)
-            printf("\tinit: SIGCHLD handler: PID %ld terminated\n",
+            printf("ns_child_exec: SIGCHLD handler: PID %ld terminated\n",
                     (long) pid);
     }
+}
+
+int
+enterProcessPidns(int pid)
+{
+    int pidns = -1, ret = -1;
+    char path[512];
+
+    sprintf(path, "/proc/%d/ns/pid", pid);
+    pidns = open(path, O_RDONLY| O_CLOEXEC);
+    if (pidns < 0) {
+        perror("fail to open pidns");
+        return -1;
+    }
+
+    if (setns(pidns, CLONE_NEWPID) < 0) {
+        perror("setns pidns");
+        return -1;
+    }
+
+    ret = fork();
+    if (ret < 0) {
+        perror("fork after setns pidns");
+        return -1;
+    } else if (ret > 0) {
+        /* Parent */
+        exit(EXIT_SUCCESS);
+    }
+    /* Child */
+
+    close(pidns);
+    return 0;
 }
 
 int
@@ -136,6 +170,37 @@ main(int argc, char *argv[])
                 argv[0], (long) child_pid);
 
     /* Parent falls through to here */
+
+    /* fork() another one and enter child_pid's pid namespace */
+    if ((flags & CLONE_NEWPID) && reaper) {
+	int pid;
+        pid = fork();
+        if (pid == -1)
+            errExit("fork");
+        if (pid == 0) {         /* Child */
+            int ret;
+            if (enterProcessPidns(child_pid) < 0)
+                    exit(EXIT_FAILURE);
+
+            printf("%s: Child (PID %d) running in pid(%d)'s pidns\n", argv[0], getpid(), pid);
+
+            ret = fork();
+            if (ret < 0) {
+                perror("fork inside pidns");
+                exit(EXIT_FAILURE);
+            } else if (ret == 0) {  /* Parent */
+                exit(EXIT_SUCCESS);
+            }
+            /* Child */
+            sleep(1);
+            printf("%s: Child  (PID=%ld) now an orphan (parent PID=%ld)\n",
+                    argv[0], (long) getpid(), (long) getppid());
+            sleep(1);
+            printf("%s: Child  (PID=%ld) terminating\n", argv[0], (long) getpid());
+            exit(EXIT_SUCCESS);
+        }
+        /* Parent */
+    }
 
     if (waitpid(child_pid, NULL, 0) == -1)      /* Wait for child */
         errExit("waitpid");
